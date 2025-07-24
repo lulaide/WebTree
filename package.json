@@ -1,0 +1,21 @@
+{
+  "name": "webtree",
+  "version": "1.1.0",
+  "description": "一个强大的网站爬虫和信息提取工具",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "webtree": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "commander": "^14.0.0",
+    "puppeteer": "^24.14.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  }
+}
