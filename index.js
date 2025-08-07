@@ -1,81 +1,65 @@
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Command } from 'commander';
-import fs from 'fs/promises';
+import fs from 'fs';
+import path from 'path';
 puppeteer.use(StealthPlugin());
 const program = new Command();
 
-async function analyzeWebStack(page, response) {
-    const headers = response.headers();
-    const stack = {};
+const Reset  = "\x1b[0m";
+const Red    = "\x1b[31m";
+const Green  = "\x1b[32m";
+const Yellow = "\x1b[33m";
+const Blue   = "\x1b[34m";
 
-    //分析后端技术和 CDN
-    if (headers['server']) {
-        stack.server = headers['server'];
+// 插件加载函数
+async function loadPlugins() {
+    const pluginsDir = './plugins';
+    const plugins = {};
+
+    // 动态导入plugins文件夹中的所有js文件
+    const pluginFiles = fs.readdirSync(pluginsDir).filter(file => file.endsWith('.js'));
+    console.log(`${Green}[+] 找到 ${pluginFiles.length} 个插件${Reset}`);
+
+    for (const file of pluginFiles) {
+        const moduleName = path.basename(file, '.js');
+        plugins[moduleName] = await import(`${pluginsDir}/${file}`);
+        console.log(`${Green}[+] 插件 ${moduleName} 加载成功${Reset}`);
     }
-    if (headers['x-powered-by']) {
-        stack.backend = headers['x-powered-by'];
-    }
-    
-    // 智能识别 CDN，但不记录动态值
-    if (headers['cf-ray'] || (headers['server'] && headers['server'].toLowerCase() === 'cloudflare')) {
-        stack.cdn = 'Cloudflare';
-    } else if (headers['via'] || headers['x-cache']) {
-        stack.cdn = 'Unknown CDN'; // Could be Varnish, Squid, or other proxy
-    }
 
-    // 2. 分析前端技术
-    const frontendStack = await page.evaluate(() => {
-        const fe = {};
-
-        // 增强的 Vue 检测
-        if (window.Vue) {
-            const version = window.Vue.version;
-            if (version && version.startsWith('3.')) {
-                fe.framework = 'Vue 3';
-            } else if (version && version.startsWith('2.')) {
-                fe.framework = 'Vue 2';
-            } else {
-                fe.framework = 'Vue';
-            }
-        } else if (document.querySelector('[data-v-app]') || document.querySelector('[__vue__]')) {
-            fe.framework = 'Vue'; // 无法仅从 DOM 判断版本
-        }
-
-        // 增强的 React 检测
-        if (window.React || window.__REACT_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector('[data-reactroot]')) {
-            fe.framework = 'React';
-        }
-        
-        // Angular 和 jQuery 检测保持不变
-        if (window.angular) {
-            fe.framework = 'Angular';
-        }
-        if (window.jQuery) {
-            fe.library = 'jQuery';
-        }
-
-        if (!fe.framework) {
-            const scripts = Array.from(document.scripts).map(s => s.src);
-            if (scripts.some(s => s.includes('react'))) fe.framework = 'React';
-            else if (scripts.some(s => s.includes('vue'))) fe.framework = 'Vue';
-            else if (scripts.some(s => s.includes('angular'))) fe.framework = 'Angular';
-        }
-        
-        return fe;
-    });
-
-    return { ...stack, ...frontendStack };
+    return plugins;
 }
 
+async function executePlugins(response, plugins) {
+    const results = [];
+    for (const [pluginName, plugin] of Object.entries(plugins)) {
+        try {
+            if (plugin.default && typeof plugin.default === 'function') {
+                const result = await plugin.default(response);
+                if (result) {
+                    results.push(result);
+                }
+            }
+        } catch (error) {
+            console.error(`Error executing plugin ${pluginName}:`, error);
+        }
+    }
+    return results;
+}
 
-
-async function extractor(url, browser) {
+async function extractor(url, browser, plugins) {
+    const pluginResults = [];
     const page = await browser.newPage();
-    const response = await page.goto(url, { waitUntil: 'networkidle2' });
-
-    // 分析技术栈
-    const webStack = await analyzeWebStack(page, response);
+    
+    // 监听所有网络响应
+    page.on('response', async (response) => {
+        const results = await executePlugins(response, plugins);
+        if (results && results.length > 0) {
+            pluginResults.push(...results.filter(result => result !== null));
+        }
+    });
+    
+    await page.goto(url, { waitUntil: 'networkidle2' });
 
     // 提取所有链接和表单信息
     const [allLinks, queryAndForms] = await page.evaluate(() => {
@@ -132,9 +116,9 @@ async function extractor(url, browser) {
     });
 
     await page.close();
-
-    // 返回三个数组：所有链接、包含查询参数及表单的数组、技术栈信息
-    return [allLinks, queryAndForms, webStack];
+    
+    // 返回三个数组：所有链接、包含查询参数及表单的数组、插件结果
+    return [allLinks, queryAndForms, pluginResults];
 }
 
 export async function genWebTree(visited) {
@@ -184,10 +168,14 @@ export async function genWebTree(visited) {
 }
 
 async function main(startUrl, options) {
+    // 在主程序开始时加载插件
+    const plugins = await loadPlugins();
+    
     const CONCURRENCY = parseInt(options.concurrency, 10);
     const browser = await puppeteer.launch({
         headless: options.headless,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        timeout: 300000
     });
     
     const domain = new URL(startUrl).hostname;
@@ -196,8 +184,8 @@ async function main(startUrl, options) {
     const visited = new Set();
     const allQueriesAndForms = [];
     const existingQueries = new Set();
-    const detectedStacks = [];
-    const existingStacks = new Set();
+    const allPluginResults = [];
+    const existingPluginResults = new Set();
     const fileExtensions = new Set(['.zip', '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.mp3', '.mp4', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.exe', '.msi', '.rar', '.tar', '.gz', '.svg', '.webp', '.avi', '.mov', '.wmv', '.csv', '.txt', '7z', '.tar.gz', '.tar.bz2', '.tar.xz', '.iso', '.apk', '.dmg', '.pkg', '.deb', '.rpm', '.msi', '.bin', '.sh']);
 
     async function processUrl(url) {
@@ -210,22 +198,37 @@ async function main(startUrl, options) {
 
         try {
             console.log(`正在访问: ${url}`);
-            const [newLinks, newQueriesAndForms, newStackInfo] = await extractor(url, browser);
+            const [newLinks, newQueriesAndForms, pluginResults] = await extractor(url, browser, plugins);
+
+            // 收集所有插件结果，并去重
+            if (pluginResults && pluginResults.length > 0) {
+                pluginResults.flat().forEach(result => {
+                    if (!existingPluginResults.has(result)) {
+                        allPluginResults.push(result);
+                        existingPluginResults.add(result);
+                    }
+                });
+            }
 
             // 将新链接添加到队列
             if (newLinks) {
               for (const link of newLinks) {
                 try {
                   const linkUrl = new URL(link);
-                  if (linkUrl.hostname === domain && !visited.has(link)) {
-                    const pathname = linkUrl.pathname.toLowerCase();
-                    const isFile = Array.from(fileExtensions).some(ext => pathname.endsWith(ext));
+                  if (linkUrl.hostname === domain) {
+                    // 创建不带查询参数的URL用于去重检查
+                    const urlWithoutQuery = linkUrl.origin + linkUrl.pathname;
+                    
+                    if (!visited.has(urlWithoutQuery)) {
+                      const pathname = linkUrl.pathname.toLowerCase();
+                      const isFile = Array.from(fileExtensions).some(ext => pathname.endsWith(ext));
 
-                    if (isFile) {
-                      console.log(`发现文件链接，跳过访问: ${link}`);
-                      visited.add(link); // 添加到已访问集合，以避免重复处理
-                    } else {
-                      toVisit.add(link);
+                      if (isFile) {
+                        console.log(`发现文件链接，跳过访问: ${link}`);
+                        visited.add(urlWithoutQuery); // 添加到已访问集合，以避免重复处理
+                      } else {
+                        toVisit.add(urlWithoutQuery); // 添加不带查询参数的URL
+                      }
                     }
                   }
                 } catch (e) {
@@ -244,15 +247,6 @@ async function main(startUrl, options) {
                     }
                 }
             }
-
-            // 添加新的技术栈信息，确保没有重复
-            if (newStackInfo && Object.keys(newStackInfo).length > 0) {
-                const stackString = JSON.stringify(newStackInfo);
-                if (!existingStacks.has(stackString)) {
-                    detectedStacks.push(newStackInfo);
-                    existingStacks.add(stackString);
-                }
-            }
         } catch (error) {
             console.error(`访问失败 ${url}: ${error.message}`);
         }
@@ -267,7 +261,7 @@ async function main(startUrl, options) {
     const siteTree = await genWebTree(visitedLinks);
 
     const outputData = {
-        '检测到的技术栈': detectedStacks,
+        '检测到的技术栈': allPluginResults,
         '所有已访问的链接': visitedLinks,
         '生成的站点树': siteTree,
         '所有查询和表单信息': allQueriesAndForms
@@ -282,7 +276,7 @@ async function main(startUrl, options) {
         }
     } else {
         console.log('\n爬取完成.');
-        console.log('检测到的技术栈:', detectedStacks);
+        console.log('检测到的技术栈:', allPluginResults);
         console.log('所有已访问的链接:', visitedLinks);
         console.log('生成的站点树:\n', siteTree);
         console.log('所有查询和表单信息:', allQueriesAndForms);
