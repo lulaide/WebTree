@@ -50,7 +50,12 @@ node index.js http://localhost:3000/ -t
 - 扫描注入点
 
 ``` bash
-所有查询和表单信息: [
+node index.js http://localhost:3000/ -q
+```
+
+``` txt
+所有查询和表单信息: 
+[
   { url: 'http://localhost:3000/login?forceLogin=true', type: 'get' },
   {
     url: 'https://grafana.com/docs/grafana/latest/?utm_source=grafana_footer',
