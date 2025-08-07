@@ -3,8 +3,11 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { Command } from 'commander';
 import fs from 'fs';
 import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 puppeteer.use(StealthPlugin());
 const program = new Command();
+const execAsync = promisify(exec);
 
 const Reset  = "\x1b[0m";
 const Red    = "\x1b[31m";
@@ -167,6 +170,72 @@ export async function genWebTree(visited) {
   return `${baseOrigin}/\n${lines.join('\n')}`;
 }
 
+// POC 测试函数
+async function executePocTests(techStack, targetUrl) {
+    if (!techStack || techStack.length === 0) {
+        console.log(`${Yellow}[!] 没有检测到技术栈，跳过POC测试${Reset}`);
+        return [];
+    }
+
+    console.log(`${Blue}[*] 开始执行POC测试...${Reset}`);
+    const pocResults = [];
+    const uniquePocs = new Set(); // 用于去重POC
+    
+    for (const tech of techStack) {
+        try {
+            console.log(`${Blue}[*] 正在测试技术栈: ${tech}${Reset}`);
+            
+            // 构建POC命令
+            const command = `./go-poc search --keyword ${tech} --target ${targetUrl} --all`;
+            
+            const result = await execAsync(command, { 
+                cwd: './go-poc',
+                timeout: 60000 // 60秒超时
+            });
+            
+            if (result.stdout) {
+                // 解析输出，只提取成功的POC结果
+                const lines = result.stdout.split('\n');
+                const successfulPocs = [];
+                
+                lines.forEach(line => {
+                    // 匹配包含"执行成功"的行
+                    if (line.includes('执行成功') && line.includes('目标可能存在漏洞')) {
+                        // 提取POC名称
+                        const pocMatch = line.match(/POC\s+([^\s]+)/);
+                        if (pocMatch) {
+                            const pocName = pocMatch[1];
+                            
+                            // 检查是否已经发现过这个POC
+                            if (!uniquePocs.has(pocName)) {
+                                uniquePocs.add(pocName);
+                                const successMsg = `【成功】POC ${pocName} 执行成功，目标可能存在漏洞！`;
+                                console.log(`${Green}${successMsg}${Reset}`);
+                                successfulPocs.push(successMsg);
+                            }
+                        }
+                    }
+                });
+                
+                if (successfulPocs.length > 0) {
+                    pocResults.push({
+                        keyword: tech,
+                        successfulPocs: successfulPocs,
+                        status: 'success'
+                    });
+                }
+            }
+            
+        } catch (error) {
+            // 静默处理错误，不输出错误信息
+            console.log(`${Yellow}[!] ${tech} POC测试完成${Reset}`);
+        }
+    }
+    
+    // 返回去重后的POC总数
+    return { pocResults, totalUniquePocs: uniquePocs.size };
+}
+
 async function main(startUrl, options) {
     // 在主程序开始时加载插件
     const plugins = await loadPlugins();
@@ -260,11 +329,21 @@ async function main(startUrl, options) {
     const visitedLinks = Array.from(visited);
     const siteTree = await genWebTree(visitedLinks);
 
+    // 执行POC测试（如果启用）
+    let pocResults = [];
+    let totalUniquePocs = 0;
+    if (options.poc) {
+        const pocTestResult = await executePocTests(allPluginResults, startUrl);
+        pocResults = pocTestResult.pocResults;
+        totalUniquePocs = pocTestResult.totalUniquePocs;
+    }
+
     const outputData = {
         '检测到的技术栈': allPluginResults,
         '所有已访问的链接': visitedLinks,
         '生成的站点树': siteTree,
-        '所有查询和表单信息': allQueriesAndForms
+        '所有查询和表单信息': allQueriesAndForms,
+        'POC测试结果': pocResults
     };
 
     if (options.output) {
@@ -294,6 +373,12 @@ async function main(startUrl, options) {
         if (options.links) {
             console.log('所有已访问的链接:', visitedLinks);
         }
+        
+        // 如果执行了POC测试，显示结果汇总
+        if (options.poc) {
+            console.log('\n=== POC测试结果汇总 ===');
+            console.log(`${Green}共发现 ${totalUniquePocs} 个潜在漏洞${Reset}`);
+        }
     }
 
     await browser.close();
@@ -308,6 +393,7 @@ program
     .option('-t, --tree', '输出站点树结构')
     .option('-q, --query', '输出查询和表单信息')
     .option('-l, --links', '输出所有已访问的链接')
+    .option('--poc', '使用检测到的技术栈执行POC测试')
     .option('--no-headless', '以非无头模式运行浏览器')
     .action(main);
 
