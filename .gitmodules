@@ -1,0 +1,3 @@
+[submodule "go-poc"]
+	path = go-poc
+	url = https://github.com/lulaide/go-poc.git
