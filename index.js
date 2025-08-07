@@ -276,10 +276,24 @@ async function main(startUrl, options) {
         }
     } else {
         console.log('\n爬取完成.');
+        
+        // 默认输出技术栈
         console.log('检测到的技术栈:', allPluginResults);
-        console.log('所有已访问的链接:', visitedLinks);
-        console.log('生成的站点树:\n', siteTree);
-        console.log('所有查询和表单信息:', allQueriesAndForms);
+        
+        // 根据选项输出站点树
+        if (options.tree) {
+            console.log('生成的站点树:\n', siteTree);
+        }
+        
+        // 根据选项输出查询和表单信息
+        if (options.query) {
+            console.log('所有查询和表单信息:', allQueriesAndForms);
+        }
+        
+        // 根据选项输出已访问的链接
+        if (options.links) {
+            console.log('所有已访问的链接:', visitedLinks);
+        }
     }
 
     await browser.close();
@@ -291,6 +305,9 @@ program
     .argument('<url>', '要爬取的起始 URL')
     .option('-c, --concurrency <number>', '并发请求数', '10')
     .option('-o, --output <file>', '将结果输出到指定文件')
+    .option('-t, --tree', '输出站点树结构')
+    .option('-q, --query', '输出查询和表单信息')
+    .option('-l, --links', '输出所有已访问的链接')
     .option('--no-headless', '以非无头模式运行浏览器')
     .action(main);
 
