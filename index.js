@@ -171,15 +171,16 @@ export async function genWebTree(visited) {
 }
 
 // POC 测试函数
-async function executePocTests(techStack, targetUrl) {
+async function executePocTests(techStack, targetUrl, detailMode = false) {
     if (!techStack || techStack.length === 0) {
         console.log(`${Yellow}[!] 没有检测到技术栈，跳过POC测试${Reset}`);
-        return [];
+        return { pocResults: [], totalUniquePocs: 0, detailResults: [] };
     }
 
     console.log(`${Blue}[*] 开始执行POC测试...${Reset}`);
     const pocResults = [];
     const uniquePocs = new Set(); // 用于去重POC
+    const detailResults = []; // 存储详细结果
     
     for (const tech of techStack) {
         try {
@@ -192,6 +193,24 @@ async function executePocTests(techStack, targetUrl) {
                 cwd: './go-poc',
                 timeout: 60000 // 60秒超时
             });
+            
+            // 如果是详细模式，保存完整输出
+            if (detailMode && result.stdout) {
+                detailResults.push({
+                    keyword: tech,
+                    command: command,
+                    stdout: result.stdout,
+                    stderr: result.stderr || ''
+                });
+                
+                // 详细模式下输出完整结果
+                console.log(`${Green}[+] ${tech} POC测试详细结果:${Reset}`);
+                console.log(result.stdout);
+                if (result.stderr) {
+                    console.log(`${Yellow}[!] ${tech} POC测试警告:${Reset}`);
+                    console.log(result.stderr);
+                }
+            }
             
             if (result.stdout) {
                 // 解析输出，只提取成功的POC结果
@@ -210,7 +229,10 @@ async function executePocTests(techStack, targetUrl) {
                             if (!uniquePocs.has(pocName)) {
                                 uniquePocs.add(pocName);
                                 const successMsg = `【成功】POC ${pocName} 执行成功，目标可能存在漏洞！`;
-                                console.log(`${Green}${successMsg}${Reset}`);
+                                // 非详细模式下才输出简洁的成功消息
+                                if (!detailMode) {
+                                    console.log(`${Green}${successMsg}${Reset}`);
+                                }
                                 successfulPocs.push(successMsg);
                             }
                         }
@@ -227,16 +249,32 @@ async function executePocTests(techStack, targetUrl) {
             }
             
         } catch (error) {
-            // 静默处理错误，不输出错误信息
-            console.log(`${Yellow}[!] ${tech} POC测试完成${Reset}`);
+            // 详细模式下输出错误信息
+            if (detailMode) {
+                console.error(`${Red}[!] ${tech} POC测试失败: ${error.message}${Reset}`);
+                detailResults.push({
+                    keyword: tech,
+                    command: `./go-poc search --keyword ${tech} --target ${targetUrl} --all`,
+                    error: error.message,
+                    status: 'error'
+                });
+            } else {
+                console.log(`${Yellow}[!] ${tech} POC测试完成${Reset}`);
+            }
         }
     }
     
-    // 返回去重后的POC总数
-    return { pocResults, totalUniquePocs: uniquePocs.size };
+    // 返回去重后的POC总数和详细结果
+    return { pocResults, totalUniquePocs: uniquePocs.size, detailResults };
 }
 
 async function main(startUrl, options) {
+    // 验证--detail选项的使用
+    if (options.detail && !options.poc) {
+        console.error(`${Red}[!] --detail 选项需要与 --poc 一起使用${Reset}`);
+        process.exit(1);
+    }
+    
     // 在主程序开始时加载插件
     const plugins = await loadPlugins();
     
@@ -332,10 +370,12 @@ async function main(startUrl, options) {
     // 执行POC测试（如果启用）
     let pocResults = [];
     let totalUniquePocs = 0;
+    let detailResults = [];
     if (options.poc) {
-        const pocTestResult = await executePocTests(allPluginResults, startUrl);
+        const pocTestResult = await executePocTests(allPluginResults, startUrl, options.detail);
         pocResults = pocTestResult.pocResults;
         totalUniquePocs = pocTestResult.totalUniquePocs;
+        detailResults = pocTestResult.detailResults;
     }
 
     const outputData = {
@@ -343,7 +383,8 @@ async function main(startUrl, options) {
         '所有已访问的链接': visitedLinks,
         '生成的站点树': siteTree,
         '所有查询和表单信息': allQueriesAndForms,
-        'POC测试结果': pocResults
+        'POC测试结果': pocResults,
+        'POC详细执行结果': detailResults
     };
 
     if (options.output) {
@@ -394,6 +435,7 @@ program
     .option('-q, --query', '输出查询和表单信息')
     .option('-l, --links', '输出所有已访问的链接')
     .option('--poc', '使用检测到的技术栈执行POC测试')
+    .option('--detail', '输出所有POC的详细执行结果（需与--poc一起使用）')
     .option('--no-headless', '以非无头模式运行浏览器')
     .action(main);
 
