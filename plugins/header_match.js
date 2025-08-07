@@ -9,13 +9,38 @@ export default async function filter(response) {
         const headers = response.headers();
         const stack = [];
 
-        // 定义技术栈关键词
+        // 定义技术栈关键词 - 专注于可能存在漏洞的服务端技术
         const techKeywords = [
-            'nginx', 'apache', 'iis', 'tomcat', 'flask', 'express', 'kestrel', 'gunicorn', 'uvicorn',
-            'php', 'asp.net', 'aspnet', 'django', 'rails', 'laravel', 'spring', 'node.js', 'nodejs',
-            'cloudflare', 'fastly', 'akamai', 'amazon cloudfront', 'maxcdn', 'keycdn',
-            'vue', 'react', 'angular', 'ember', 'backbone',
-            'wordpress', 'drupal', 'joomla', 'magento', 'shopify'
+            // Web服务器
+            'nginx', 'apache', 'iis', 'tomcat', 'jetty', 'undertow', 'lighttpd', 'caddy',
+            
+            // 编程语言和框架
+            'php', 'asp.net', 'aspnet', 'django', 'flask', 'fastapi', 'rails', 'laravel', 'symfony', 
+            'spring', 'struts', 'express', 'koa', 'nest', 'node.js', 'nodejs',
+            
+            // Java相关
+            'weblogic', 'websphere', 'jboss', 'wildfly', 'glassfish', 'resin',
+            
+            // Python WSGI/ASGI服务器
+            'gunicorn', 'uwsgi', 'uvicorn', 'hypercorn', 'waitress',
+            
+            // CMS和应用
+            'wordpress', 'drupal', 'joomla', 'magento', 'prestashop', 'opencart', 
+            'typo3', 'concrete5', 'modx', 'umbraco', 'sitecore', 'episerver',
+            
+            // 开发框架和平台
+            'thinkphp', 'codeigniter', 'cakephp', 'yii', 'zend', 'phalcon',
+            'ruby', 'sinatra', 'padrino', 'hanami',
+            'go', 'gin', 'echo', 'beego', 'iris',
+            'dotnet', 'mvc', 'webapi', 'blazor',
+            
+            // 数据库和中间件
+            'mysql', 'postgresql', 'mssql', 'oracle', 'mongodb', 'redis',
+            'elasticsearch', 'solr', 'kibana', 'grafana',
+            
+            // 其他常见服务
+            'jenkins', 'gitlab', 'nexus', 'artifactory', 'sonarqube',
+            'phpmyadmin', 'adminer', 'phpinfo'
         ];
 
         // 遍历所有请求头进行关键词匹配
