@@ -279,6 +279,9 @@ async function main(startUrl, options) {
     const plugins = await loadPlugins();
     
     const CONCURRENCY = parseInt(options.concurrency, 10);
+    const MAX_LINKS = parseInt(options.maxLinks, 10);
+    console.log(`${Blue}[*] 最大访问链接数限制: ${MAX_LINKS}${Reset}`);
+    
     const browser = await puppeteer.launch({
         headless: options.headless,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -296,7 +299,7 @@ async function main(startUrl, options) {
     const fileExtensions = new Set(['.zip', '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.mp3', '.mp4', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.exe', '.msi', '.rar', '.tar', '.gz', '.svg', '.webp', '.avi', '.mov', '.wmv', '.csv', '.txt', '7z', '.tar.gz', '.tar.bz2', '.tar.xz', '.iso', '.apk', '.dmg', '.pkg', '.deb', '.rpm', '.msi', '.bin', '.sh']);
 
     async function processUrl(url) {
-        if (visited.has(url)) {
+        if (visited.has(url) || visited.size >= MAX_LINKS) {
             return;
         }
 
@@ -304,7 +307,7 @@ async function main(startUrl, options) {
         toVisit.delete(url);
 
         try {
-            console.log(`正在访问: ${url}`);
+            console.log(`正在访问: ${url} (${visited.size}/${MAX_LINKS})`);
             const [newLinks, newQueriesAndForms, pluginResults] = await extractor(url, browser, plugins);
 
             // 收集所有插件结果，并去重
@@ -359,9 +362,22 @@ async function main(startUrl, options) {
         }
     }
 
-    while (toVisit.size > 0) {
+    while (toVisit.size > 0 && visited.size < MAX_LINKS) {
         const currentBatch = Array.from(toVisit).slice(0, CONCURRENCY);
-        await Promise.all(currentBatch.map(url => processUrl(url)));
+        
+        // 检查当前批次是否会超过限制
+        const remainingSlots = MAX_LINKS - visited.size;
+        const batchToProcess = currentBatch.slice(0, remainingSlots);
+        
+        if (batchToProcess.length > 0) {
+            await Promise.all(batchToProcess.map(url => processUrl(url)));
+        }
+        
+        // 如果已达到限制，退出循环
+        if (visited.size >= MAX_LINKS) {
+            console.log(`${Yellow}[!] 已达到最大访问链接数限制 (${MAX_LINKS})，停止爬取${Reset}`);
+            break;
+        }
     }
 
     const visitedLinks = Array.from(visited);
@@ -379,6 +395,12 @@ async function main(startUrl, options) {
     }
 
     const outputData = {
+        '扫描统计': {
+            '已访问链接数': visited.size,
+            '待访问链接数': toVisit.size,
+            '最大链接数限制': MAX_LINKS,
+            '是否达到限制': visited.size >= MAX_LINKS
+        },
         '检测到的技术栈': allPluginResults,
         '所有已访问的链接': visitedLinks,
         '生成的站点树': siteTree,
@@ -396,6 +418,7 @@ async function main(startUrl, options) {
         }
     } else {
         console.log('\n爬取完成.');
+        console.log(`${Blue}扫描统计: 访问了 ${visited.size} 个链接，队列中还有 ${toVisit.size} 个待访问${Reset}`);
         
         // 默认输出技术栈
         console.log('检测到的技术栈:', allPluginResults);
@@ -430,6 +453,7 @@ program
     .description('一个强大的网站爬虫和信息提取工具')
     .argument('<url>', '要爬取的起始 URL')
     .option('-c, --concurrency <number>', '并发请求数', '10')
+    .option('-m, --max-links <number>', '最大访问链接数量限制', '100')
     .option('-o, --output <file>', '将结果输出到指定文件')
     .option('-t, --tree', '输出站点树结构')
     .option('-q, --query', '输出查询和表单信息')
